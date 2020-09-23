@@ -12,6 +12,10 @@
 /**
  * Payment Provider Class
  */
+
+require_once(dirname(__FILE__).'/../../../modules/marketplace/classes/WkMpSellerProduct.php');
+require_once(dirname(__FILE__).'/../../../modules/marketplace/classes/WkMpSeller.php');
+
 class MobbexHelper
 {
     const MOBBEX_VERSION = '1.3.5';
@@ -153,16 +157,47 @@ class MobbexHelper
         $items = array();
         $products = $cart->getProducts(true);
 
-        //p($products);
+        /* echo '<pre>';print_r($products); die; */
 
+        //p($products);
+        $arSplit = array();
+        $idSeller = 0;
         foreach ($products as $product) {
+
             //p($product);
             $image = Image::getCover($product['id_product']);
             $link = new Link; //because getImageLInk is not static function
             $imagePath = $link->getImageLink($product['link_rewrite'], $image['id_image'], 'home_default');
 
             $items[] = array("image" => 'https://' . $imagePath, "description" => $product['name'], "quantity" => $product['cart_quantity'], "total" => round($product['price_wt'], 2));
+
+            //Obtener id_seller segun el producto
+            $sellerProduct = WkMpSellerProduct::getSellerProductByIdProduct($product['id_product']); /* echo '<pre>'; print_r($sellerProduct); die; */
+            $idSeller = $sellerProduct['id_seller'];
+
+            $seller = new WkMpSeller($idSeller);
+
+            $arP[$idSeller]['tax_id'] = $seller->tax_identification_number;
+            $arP[$idSeller]['pre'][]  =  round($product['price_wt'], 2);
+            $arP[$idSeller]['total']  =  array_sum( $arP[$idSeller]['pre']);
+            $arP[$idSeller]['reference'] = 'Pago CUIT '.$seller->tax_identification_number;
+            
         }
+
+        foreach($arP as $row){
+
+            $fee = (($row['total']*Configuration::get('WK_MP_GLOBAL_COMMISSION'))/100);
+            /* $total_seller = $row['total'] - $fee; */
+
+            $split[] = array(
+                "tax_id" => $row['tax_id'],
+                "total" => $row['total'],
+                "reference" => 'Pago CUIT '.$row['reference'],
+                "fee" => $fee
+            );
+        }
+
+        /* echo '<pre>'; print_r($split); die; */
 
         // Create data
         $data = array(
@@ -184,7 +219,7 @@ class MobbexHelper
             )),
             'options' => MobbexHelper::getOptions(),
             'redirect' => 0,
-            'total' => (float) $cart->getOrderTotal(true, Cart::BOTH),
+            'total' => (float)$cart->getOrderTotal(true, Cart::BOTH),
         );
 
         if (!$customer->isGuest()) {
@@ -193,6 +228,10 @@ class MobbexHelper
                 "email" => $customer->email,
             );
         }
+
+        $data['split'] = $split;        
+
+        /* echo '<pre>'; print_r($data); die; */
 
         curl_setopt_array($curl, array(
             CURLOPT_URL => "https://mobbex.com/p/checkout/create",
